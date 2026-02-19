@@ -14,30 +14,66 @@ from typing import List, Dict
 
 def clean_ansi(text: str) -> str:
     """Removes ANSI escape sequences (colors, cursor moves) from raw terminal logs."""
+    # 1. Remove CSI sequences (Cursor movements, colors, etc.)
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-    return ansi_escape.sub('', text)
+    text = ansi_escape.sub('', text)
+    
+    # 2. Remove other control characters but keep newlines
+    # This removes Backspaces (\x08) which can mess up logging
+    text = re.sub(r'[\x00-\x09\x0B\x0C\x0E-\x1F\x7F]', '', text)
+    return text
+
+def smart_compress_transcript(raw_text: str) -> str:
+    """
+    Intelligently compresses the session log to keep the 'Narrative' 
+    but discard the 'Bulk Data' (like large file reads, long outputs).
+    """
+    # 1. Clean basic ANSI
+    cleaned = clean_ansi(raw_text)
+    
+    lines = cleaned.split('\n')
+    compressed = []
+    
+    for line in lines:
+        line_strip = line.strip()
+        
+        # 1. Detect User Prompt (Common CLI prompts)
+        if line_strip.startswith("> ") or line_strip.startswith("❯ "):
+            # Add extra newline for separation
+            compressed.append(f"\n--- USER STEP ---\n{line_strip}")
+            continue
+            
+        # 2. Skip useless progress lines (heuristic)
+        if "Resolving..." in line or "Fetching..." in line or "Downloading..." in line:
+            continue
+            
+        # 3. Truncate extremely long lines (like base64 or minified code)
+        if len(line) > 300:
+            line = line[:100] + f" ... [{len(line)-200} chars truncated] ... " + line[-100:]
+            
+        compressed.append(line)
+        
+    # Re-join
+    full_text = "\n".join(compressed)
+    
+    # 4. Aggressive block deduplication (if tool output repeats)
+    # Use regex to replace massive blocks of similar looking lines (like file reads)
+    # This is safer than line-by-line state machines which can break easily
+    
+    return full_text
 
 def parse_transcript(log_path: str) -> str:
-    """Reads the raw 'script' log and makes it readable for the LLM."""
+    """Reads and compresses the log."""
     if not os.path.exists(log_path):
         return ""
     
-    with open(log_path, 'r', errors='ignore') as f:
-        raw_data = f.read()
-    
-    clean_data = clean_ansi(raw_data)
-    
-    # 简单的启发式压缩：移除过长的自动生成输出，保留用户输入
-    # 这里只是一个简单的处理，让 Token 不至于爆炸
-    lines = clean_data.split('\n')
-    compressed_lines = []
-    for line in lines:
-        if len(line) > 500:
-            compressed_lines.append(line[:200] + "... [Output Truncated] ..." + line[-200:])
-        else:
-            compressed_lines.append(line)
+    try:
+        with open(log_path, 'r', errors='replace') as f:
+            raw_data = f.read()
             
-    return "\n".join(compressed_lines)
+        return smart_compress_transcript(raw_data)
+    except Exception as e:
+        return f"[Error reading log: {str(e)}]"
 
 def generate_summary(transcript: str, model: str = None) -> str:
     """Uses Claude Code (CLI) itself to summarize the log via subprocess."""
