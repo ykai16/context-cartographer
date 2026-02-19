@@ -147,33 +147,33 @@ def generate_summary(transcript: str, old_summary: str = "", model: str = None) 
 
 def cleanup_old_logs(log_dir: str, days: int = 2):
     """Deletes log files older than X days."""
-    if not os.path.exists(log_dir):
-        # Create directory if it doesn't exist (to avoid errors later)
-        try:
-            os.makedirs(log_dir, exist_ok=True)
-        except OSError:
-            pass
-        return
+    try:
+        # Resolve absolute path just to be sure
+        abs_log_dir = os.path.abspath(log_dir)
         
-    cutoff = datetime.datetime.now().timestamp() - (days * 86400)
-    
-    count = 0
-    for f in os.listdir(log_dir):
-        if not f.endswith(".log"): continue
+        if not os.path.exists(abs_log_dir):
+            return
+            
+        cutoff = datetime.datetime.now().timestamp() - (days * 86400)
         
-        path = os.path.join(log_dir, f)
-        # Check if file exists (it might be deleted concurrently)
-        if not os.path.exists(path): continue
-        
-        if os.path.getmtime(path) < cutoff:
+        count = 0
+        for f in os.listdir(abs_log_dir):
+            if not f.endswith(".log"): continue
+            
+            path = os.path.join(abs_log_dir, f)
             try:
-                os.remove(path)
-                count += 1
+                if os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+                    count += 1
             except OSError:
                 pass
-                
-    if count > 0:
-        print(f"🧹 Cleaned up {count} old log files (> {days} days).")
+                    
+        if count > 0:
+            print(f"🧹 Cleaned up {count} old log files.")
+            
+    except Exception as e:
+        # Housekeeping should never crash the app
+        print(f"⚠️  Cleanup warning: {str(e)}")
 
 def main():
     parser = argparse.ArgumentParser(description="ContextMap Analyzer")
@@ -183,9 +183,13 @@ def main():
     args = parser.parse_args()
 
     # 0. Cleanup Old Logs (Housekeeping)
-    # Use dirname because log_file is a file path
-    log_dir = os.path.dirname(os.path.abspath(args.log_file))
-    cleanup_old_logs(log_dir)
+    # Ensure we look in the directory of the log file provided
+    try:
+        log_dir = os.path.dirname(args.log_file)
+        if log_dir: # Only if a directory component exists
+            cleanup_old_logs(log_dir)
+    except Exception:
+        pass # Ignore errors in housekeeping
 
     # 2. Parse & Analyze
     print("🧠 Analyzing session context...")
