@@ -42,9 +42,7 @@ def parse_transcript(log_path: str) -> str:
     return "\n".join(compressed_lines)
 
 def generate_summary(transcript: str, api_key: str, base_url: str = None) -> str:
-    """Calls the LLM to analyze the session."""
-    
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    """Calls the LLM (OpenAI or Bedrock) to analyze the session."""
     
     system_prompt = """
     You are the "Context Cartographer". Your job is to analyze a terminal session transcript of a developer interacting with an AI coding assistant.
@@ -64,11 +62,49 @@ def generate_summary(transcript: str, api_key: str, base_url: str = None) -> str
     [Bulleted list of immediate next steps or unresolved errors.]
     """
     
-    user_prompt = f"Here is the session transcript. Analyze it:\n\n{transcript[-100000:]}" # 保留最后 100k 字符
+    user_prompt = f"Here is the session transcript. Analyze it:\n\n{transcript[-100000:]}" # Keep last 100k chars
+
+    # Detect AWS Bedrock environment
+    if os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"):
+        try:
+            import boto3
+            # Initialize Bedrock client
+            bedrock = boto3.client(service_name='bedrock-runtime', region_name=os.getenv('AWS_REGION', 'us-east-1'))
+            
+            # Payload for Bedrock (Claude 3 format)
+            payload = {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 4096,
+                "system": system_prompt,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": user_prompt
+                    }
+                ]
+            }
+            
+            response = bedrock.invoke_model(
+                modelId="anthropic.claude-3-sonnet-20240229-v1:0", # Use Sonnet for speed/quality balance
+                contentType="application/json",
+                accept="application/json",
+                body=json.dumps(payload)
+            )
+            
+            response_body = json.loads(response.get('body').read())
+            return response_body.get('content')[0].get('text')
+            
+        except ImportError:
+            return "❌ AWS detected but 'boto3' missing. Run: pip install boto3"
+        except Exception as e:
+            return f"❌ AWS Bedrock Error: {str(e)}"
+
+    # Default to OpenAI compatible (incl. Anthropic via OpenAI SDK if configured)
+    client = OpenAI(api_key=api_key, base_url=base_url)
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4o", # 或者用户配置的其他模型
+            model="gpt-4o", # Or user config
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -86,10 +122,15 @@ def main():
     args = parser.parse_args()
 
     # 1. Check API Key
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("CARTOGRAPHER_KEY")
-    if not api_key:
+    # Support multiple key names for AWS Bedrock or OpenAI
+    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY") or os.getenv("BEDROCK_API_KEY") or os.getenv("CARTOGRAPHER_KEY")
+    
+    # Check for AWS Bedrock specific env vars if no direct key
+    is_aws = bool(os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"))
+
+    if not api_key and not is_aws:
         # Fallback: Create a dummy report if no key (so functionality is visible)
-        print("⚠️  No API Key found (OPENAI_API_KEY). Generating placeholder report.")
+        print("⚠️  No API Key found (OPENAI_API_KEY / ANTHROPIC_API_KEY / AWS Credentials). Generating placeholder report.")
         dummy_report = """# 🗺️ Session Evolution
 > **⚠️ API Key Missing**: Please export OPENAI_API_KEY to enable AI analysis.
 
