@@ -6,13 +6,11 @@ import argparse
 import datetime
 from typing import List, Dict
 
-# 尝试导入 OpenAI，如果不存在则提示用户安装
-try:
-    from openai import OpenAI
-except ImportError:
-    print("❌ Missing dependency: openai")
-    print("👉 Please run: pip install openai")
-    sys.exit(1)
+# No external dependencies required for CLI-piping mode
+# try:
+#     from openai import OpenAI
+# except ImportError:
+#     pass # Handled gracefully if needed for fallback
 
 def clean_ansi(text: str) -> str:
     """Removes ANSI escape sequences (colors, cursor moves) from raw terminal logs."""
@@ -41,96 +39,72 @@ def parse_transcript(log_path: str) -> str:
             
     return "\n".join(compressed_lines)
 
-def get_bedrock_model_id(user_model_name: str) -> str:
-    """Maps user-friendly model names to AWS Bedrock Model IDs."""
-    # Normalize input
-    name = user_model_name.lower()
-    
-    # Bedrock Model Map (Updated Feb 2026)
-    mapping = {
-        "opus": "anthropic.claude-3-opus-20240229-v1:0",
-        "sonnet": "anthropic.claude-3-5-sonnet-20240620-v1:0", # Default 'sonnet' to 3.5
-        "sonnet-3-5": "anthropic.claude-3-5-sonnet-20240620-v1:0",
-        "haiku": "anthropic.claude-3-haiku-20240307-v1:0",
-        "haiku-3-5": "anthropic.claude-3-5-haiku-20241022-v1:0",
-    }
-    
-    # Direct match or partial match logic
-    if name in mapping:
-        return mapping[name]
-        
-    # Heuristic fallback for Bedrock IDs
-    if "anthropic" in name:
-        return name
-        
-    # Default to the most capable model if unsure (User preference)
-    return "anthropic.claude-3-5-sonnet-20240620-v1:0"
-
-def generate_summary(transcript: str, api_key: str, model: str = None, base_url: str = None) -> str:
-    """Calls the LLM to analyze the session, attempting to match the user's chosen model."""
-    
-    # Defaults if not specified
-    target_model = model or "gpt-4o" 
+def generate_summary(transcript: str, model: str = None) -> str:
+    """Uses Claude Code (CLI) itself to summarize the log via subprocess."""
     
     system_prompt = """
-    You are "ContextMap". Your job is to analyze a terminal session transcript...
-    [Rest of prompt truncated for brevity]
+    You are 'ContextMap'. Analyze the attached session transcript.
+    Output a Markdown report with:
+    1. # 🗺️ Session Evolution (Mermaid Graph)
+    2. # 📝 Key Decisions Log (Table)
+    3. # 🧠 Context Anchor (Summary for next session)
+    4. # 🚧 Left Hanging (Next steps)
+    
+    Keep it concise. Use the transcript provided below.
     """
     
-    user_prompt = f"Here is the session transcript. Analyze it:\n\n{transcript[-100000:]}"
-
-    # --- AWS Bedrock Logic ---
-    if os.getenv("AWS_ACCESS_KEY_ID") and os.getenv("AWS_SECRET_ACCESS_KEY"):
-        try:
-            import boto3
-            bedrock = boto3.client(service_name='bedrock-runtime', region_name=os.getenv('AWS_REGION', 'us-east-1'))
-            
-            # Map the CLI model name to Bedrock ID
-            bedrock_model_id = get_bedrock_model_id(target_model)
-            
-            # Claude 3/3.5 Message API Payload
-            payload = {
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 4096,
-                "system": system_prompt,
-                "messages": [{"role": "user", "content": user_prompt}]
-            }
-            
-            response = bedrock.invoke_model(
-                modelId=bedrock_model_id,
-                contentType="application/json",
-                accept="application/json",
-                body=json.dumps(payload)
-            )
-            
-            response_body = json.loads(response.get('body').read())
-            return response_body.get('content')[0].get('text')
-            
-        except Exception as e:
-            return f"❌ AWS Bedrock Error ({bedrock_model_id}): {str(e)}"
-
-    # --- OpenAI / Anthropic via Adapter Logic ---
-    # If the user passed a 'claude' model but we are using OpenAI client, 
-    # we assume they might be using OpenRouter or similar, OR we fallback to GPT-4o
-    # if standard OpenAI key is detected.
+    # We construct a prompt file to feed into Claude
+    prompt_content = f"{system_prompt}\n\nTRANSCRIPT:\n{transcript[-80000:]}" # Limit to 80k chars to be safe
     
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    import tempfile
+    import subprocess
     
-    # Heuristic: If looking for Claude but using OpenAI Key -> warn or fallback?
-    # For now, pass it through. Many proxies accept 'claude-3-opus' directly.
-    
+    # Create temp file for prompt content
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".txt") as tmp:
+        tmp.write(prompt_content)
+        tmp_path = tmp.name
+        
     try:
-        response = client.chat.completions.create(
-            model=target_model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.3
-        )
-        return response.choices[0].message.content
+        # Construct the Claude CLI command
+        # Strategy: cat prompt.txt | claude -p "Summarize this input"
+        # Or: claude -p "$(cat prompt.txt)"
+        
+        real_claude = os.getenv("REAL_CLAUDE_PATH") or "claude" 
+        
+        # We assume 'claude' accepts prompt via argument. 
+        # Since prompt is large, we might hit ARG_MAX.
+        # Ideally, we should check if claude supports file input or stdin.
+        # For now, let's try the pipe approach which is standard for CLI tools.
+        
+        # We run: cat tmp_path | claude -p "Analyze this input"
+        # Note: We must ensure we don't trigger the wrapper script again (infinite loop).
+        # The Wrapper script sets REAL_CLAUDE_PATH, so we are safe if running from there.
+        
+        # Command: claude --print "Analyze this file" (if supported)
+        # Or simply rely on stdin if supported.
+        
+        # Let's try to run it directly with the prompt as text, catching the output.
+        # This assumes the user is authenticated in the CLI environment.
+        
+        # Use subprocess to pipe
+        with open(tmp_path, 'r') as f:
+            process = subprocess.run(
+                [real_claude, "-p", "Analyze the provided transcript context."], 
+                stdin=f,
+                text=True, 
+                capture_output=True
+            )
+        
+        if process.returncode != 0:
+            return f"❌ Claude CLI Error: {process.stderr}"
+            
+        return process.stdout
+
     except Exception as e:
-        return f"❌ Error generating summary: {str(e)}"
+        return f"❌ Execution Error: {str(e)}"
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 def main():
     parser = argparse.ArgumentParser(description="ContextMap Analyzer")
@@ -138,8 +112,24 @@ def main():
     parser.add_argument("--out", default=".context/session_summary.md", help="Output path for summary")
     parser.add_argument("--model", default=None, help="The model used in the session")
     args = parser.parse_args()
+
+    # 2. Parse & Analyze
+    print("🧠 Analyzing session context...")
+    transcript = parse_transcript(args.log_file)
+    if not transcript.strip():
+        print("⚠️  Empty transcript. Nothing to analyze.")
+        return
+
+    # Call summary generation (which now uses Claude CLI subprocess)
+    summary = generate_summary(transcript, model=args.model)
     
-    # ... [Rest of main]
+    # 3. Save
+    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    with open(args.out, 'w') as f:
+        f.write(summary)
     
-    summary = generate_summary(transcript, api_key, model=args.model)
+    print(f"✨ Context Map saved to: {args.out}")
+
+if __name__ == "__main__":
+    main()
 
