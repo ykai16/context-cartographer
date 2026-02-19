@@ -73,7 +73,7 @@ def generate_summary(transcript: str, api_key: str, model: str = None, base_url:
     target_model = model or "gpt-4o" 
     
     system_prompt = """
-    You are the "Context Cartographer". Your job is to analyze a terminal session transcript...
+    You are "ContextMap". Your job is to analyze a terminal session transcript...
     [Rest of prompt truncated for brevity]
     """
     
@@ -133,7 +133,7 @@ def generate_summary(transcript: str, api_key: str, model: str = None, base_url:
         return f"❌ Error generating summary: {str(e)}"
 
 def main():
-    parser = argparse.ArgumentParser(description="Context Cartographer Analyzer")
+    parser = argparse.ArgumentParser(description="ContextMap Analyzer")
     parser.add_argument("log_file", help="Path to the raw session log")
     parser.add_argument("--out", default=".context/session_summary.md", help="Output path for summary")
     parser.add_argument("--model", default=None, help="The model used in the session")

@@ -4,7 +4,7 @@
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_DIR="$INSTALL_DIR/bin"
 
-echo "🦉 Installing Context Cartographer..."
+echo "🦉 Installing ContextMap..."
 
 # 1. Make scripts executable
 chmod +x "$BIN_DIR/smart_claude.sh"
@@ -29,7 +29,7 @@ fi
 # Add alias if not present
 if ! grep -q "alias claude=" "$SHELL_RC"; then
     echo "" >> "$SHELL_RC"
-    echo "# Context Cartographer Alias" >> "$SHELL_RC"
+    echo "# ContextMap Alias" >> "$SHELL_RC"
     echo "alias claude=\"$BIN_DIR/smart_claude.sh\"" >> "$SHELL_RC"
     echo "✅ Alias 'claude' added to $SHELL_RC"
     echo "👉 Please run: source $SHELL_RC"

@@ -4,7 +4,7 @@
 CONTEXT_DIR=".context"
 SUMMARY_FILE="$CONTEXT_DIR/session_summary.md"
 LOG_FILE="$CONTEXT_DIR/last_session_raw.log"
-CARTOGRAPHER_SCRIPT="$(dirname "$0")/cartographer.py"
+CARTOGRAPHER_SCRIPT="$(dirname "$0")/contextmap.py"
 
 # Colors
 GREEN='\033[0;32m'
@@ -16,7 +16,7 @@ NC='\033[0m' # No Color
 mkdir -p "$CONTEXT_DIR"
 
 # --- Phase 1: Pre-flight Check (Resume Context) ---
-echo -e "${CYAN}🦉 Context Cartographer active.${NC}"
+echo -e "${CYAN}🦉 ContextMap active.${NC}"
 
 if [ -f "$SUMMARY_FILE" ]; then
     echo -e "\n${YELLOW}📜 Previously on this project...${NC}"
