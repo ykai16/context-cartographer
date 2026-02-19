@@ -43,12 +43,52 @@ fi
 # ... (omitted) ...
 
 # Detection logic for 'script' command syntax
+# NOTE: 'script' behaves differently on BSD/MacOS vs Linux
+# MacOS: script -q <file> <command>
+# Linux: script -c <command> <file>
+
 if [[ "$OSTYPE" == "darwin"* ]]; then
-    # MacOS
-    script -q "$ABS_LOG_FILE" "$REAL_CLAUDE" "$@"
+    # MacOS 'script' creates a sub-shell.
+    # The command provided to script is executed inside that shell.
+    # If it exits immediately, it means the command invocation is wrong or capturing stdin fails.
+    
+    # CRITICAL FIX for MacOS: 
+    # 'script' on MacOS often has issues with interactive curses apps if not handled carefully.
+    # The 'command' argument is just a string passed to shell.
+    
+    # Try interactive mode with /dev/null for input if non-interactive, but here we WANT interactive.
+    # We simply execute script with the file. 'script' spawns a shell.
+    # To run a SPECIFIC command, we must ensure it's interactive.
+    
+    # On MacOS, to run an interactive command inside script properly without immediate exit:
+    # We just run 'script -q logfile command args...' directly.
+    # But arguments handling is tricky.
+    
+    # Let's try the most robust way: Run 'script' which spawns a shell, and we trap the command execution?
+    # No, that's too complex.
+    
+    # The issue is likely how arguments are passed.
+    # Let's quote the command and arguments as a single string for the shell spawned by script.
+    
+    # Re-assemble command string carefully
+    CMD_STRING="$REAL_CLAUDE"
+    for arg in "$@"; do
+        # Simple quoting for safety
+        CMD_STRING="$CMD_STRING \"$arg\""
+    done
+    
+    script -q "$ABS_LOG_FILE" $CMD_STRING
 else
-    # Linux / Standard
-    script -c "$REAL_CLAUDE $*" "$ABS_LOG_FILE"
+    # Linux / Standard (util-linux)
+    # Re-assemble command string
+    CMD_STRING="$REAL_CLAUDE"
+    for arg in "$@"; do
+        CMD_STRING="$CMD_STRING \"$arg\""
+    done
+    
+    # The -c flag expects a single string argument for the command
+    # And -e returns the exit code of the child
+    script -e -c "$CMD_STRING" "$ABS_LOG_FILE"
 fi
 
 EXIT_CODE=$?
