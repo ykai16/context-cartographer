@@ -81,7 +81,13 @@ else
     
     # The -c flag expects a single string argument for the command
     # And -e returns the exit code of the child
-    script -e -c "$CMD_STRING" "$ABS_LOG_FILE"
+    # CRITICAL FIX for Linux: 
+    # 'script -c cmd' sometimes exits immediately if 'cmd' is not a shell.
+    # We force a shell context using 'bash -c' or 'sh -c' to ensure interactive behavior if needed.
+    # But usually 'script -c' works. The issue might be finding the binary or TTY allocation.
+    # Let's try explicit shell wrapping on Linux too, which is safer.
+    
+    script -e -q -c "/bin/bash -c '$CMD_STRING'" "$ABS_LOG_FILE"
 fi
 
 EXIT_CODE=$?
