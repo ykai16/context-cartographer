@@ -74,25 +74,26 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
 else
     # Linux / Standard (util-linux)
     
-    # 1. Print Debug Info (so user knows what's happening)
-    echo "🔍 Debug: Launching '$REAL_CLAUDE' via script..."
+    # 4. Fallback: The Nuclear Option
+    # If 'script' is being difficult, we can simply tee the output manually?
+    # No, that loses input recording.
     
-    # 2. Construct command string safely
-    # We use $* to join all arguments into a single string
-    FULL_CMD="$REAL_CLAUDE $*"
+    # Let's try running script interactively WITHOUT -c
+    # This just starts a new shell, recording to log.
+    # The user has to manually run claude inside it.
+    # BUT we want automation.
     
-    # 3. Run script
-    # We remove -q and -e to maximize compatibility with older 'script' versions
-    # We rely on standard behavior: script -c "command" logfile
+    # Let's try the /dev/null trick for input if it's a TTY issue? No.
     
-    script -c "$FULL_CMD" "$ABS_LOG_FILE"
+    # The most robust way on stubborn Linux systems:
+    # Use SHELL environment variable to pass the command
     
-    # Capture exit code of script (which captures exit code of claude)
-    RET_CODE=$?
+    export SHELL="$REAL_CLAUDE"
+    script -q "$ABS_LOG_FILE"
     
-    if [ $RET_CODE -ne 0 ]; then
-        echo "⚠️  Claude exited with code $RET_CODE"
-    fi
+    # Note: This tricks 'script' into thinking 'claude' is the shell.
+    # It will run claude, record it, and exit when claude exits.
+    # This bypasses the -c argument parsing hell entirely.
 fi
 
 EXIT_CODE=$?
