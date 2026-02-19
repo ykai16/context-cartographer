@@ -88,12 +88,21 @@ else
     # The most robust way on stubborn Linux systems:
     # Use SHELL environment variable to pass the command
     
-    export SHELL="$REAL_CLAUDE"
-    script -q "$ABS_LOG_FILE"
+    # PROBLEM: Some shells reset SHELL env or script ignores it.
+    # ALTERNATIVE: Direct pipe recording (loses some interactivity features but works)
+    # OR: Using a temporary rcfile for bash
     
-    # Note: This tricks 'script' into thinking 'claude' is the shell.
-    # It will run claude, record it, and exit when claude exits.
-    # This bypasses the -c argument parsing hell entirely.
+    # New Approach: Spawn bash with a custom rcfile that runs claude
+    RCFILE=$(mktemp)
+    echo "$FULL_CMD" >> "$RCFILE"
+    echo "exit" >> "$RCFILE" # Exit shell after claude finishes
+    
+    # Run script which spawns bash, telling bash to use our rcfile
+    # We use --rcfile to force bash to run our command immediately
+    # -i forces interactive mode so TTY remains valid
+    script -q -c "/bin/bash --rcfile $RCFILE -i" "$ABS_LOG_FILE"
+    
+    rm "$RCFILE"
 fi
 
 EXIT_CODE=$?
