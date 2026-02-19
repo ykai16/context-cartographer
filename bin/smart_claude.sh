@@ -49,35 +49,28 @@ fi
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # MacOS 'script' creates a sub-shell.
-    # The command provided to script is executed inside that shell.
-    # If it exits immediately, it means the command invocation is wrong or capturing stdin fails.
+    # We must ensure we're invoking 'script' correctly to keeping the shell interactive.
+    # The safest cross-platform way to use 'script' for interactive sessions is actually 
+    # NOT to pass the command to it directly (which is flaky), but to start a new shell 
+    # inside 'script' and use .bashrc/.zshrc logic to auto-run command? No, too invasive.
     
-    # CRITICAL FIX for MacOS: 
-    # 'script' on MacOS often has issues with interactive curses apps if not handled carefully.
-    # The 'command' argument is just a string passed to shell.
+    # Better approach for MacOS:
+    # Use 'SHELL' env var to force script to spawn a shell that executes our command string
+    # But script -q log cmd [args] SHOULD work.
     
-    # Try interactive mode with /dev/null for input if non-interactive, but here we WANT interactive.
-    # We simply execute script with the file. 'script' spawns a shell.
-    # To run a SPECIFIC command, we must ensure it's interactive.
+    # Let's try the simplest approach that works on Mac:
+    # script -q logfile /bin/bash -c "cmd args..."
+    # This forces a shell context.
     
-    # On MacOS, to run an interactive command inside script properly without immediate exit:
-    # We just run 'script -q logfile command args...' directly.
-    # But arguments handling is tricky.
-    
-    # Let's try the most robust way: Run 'script' which spawns a shell, and we trap the command execution?
-    # No, that's too complex.
-    
-    # The issue is likely how arguments are passed.
-    # Let's quote the command and arguments as a single string for the shell spawned by script.
-    
-    # Re-assemble command string carefully
+    # Re-assemble command string
     CMD_STRING="$REAL_CLAUDE"
     for arg in "$@"; do
-        # Simple quoting for safety
         CMD_STRING="$CMD_STRING \"$arg\""
     done
     
-    script -q "$ABS_LOG_FILE" $CMD_STRING
+    # Use 'bash -c' to ensure we have a proper execution context inside script
+    # And force pseudo-terminal allocation if needed? No, script does that.
+    script -q "$ABS_LOG_FILE" /bin/bash -c "$CMD_STRING"
 else
     # Linux / Standard (util-linux)
     # Re-assemble command string
