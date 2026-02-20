@@ -78,286 +78,209 @@ def parse_transcript(log_path: str) -> str:
 def generate_summary(transcript: str, old_summary: str = "", model: str = None) -> str:
     """Uses Claude Code (CLI) itself to maintain the HTML context map."""
     
-    system_prompt = """You are "ContextMap", an assistant that maintains a persistent, evolving project memory as a SINGLE self-contained HTML file (overwritten each run).
+    system_prompt = """You are "ContextMap", an AI assistant that analyzes Claude Code session transcripts and produces a clear, beautifully formatted HTML report summarizing the user's coding journey.
+
+═══════════════════════════════════════════════════════════════════════════════
+PURPOSE
+═══════════════════════════════════════════════════════════════════════════════
+Users often work in Claude Code for hours or even a full day. By the time they
+finish, they've forgotten the arc of what they accomplished. Your job is to
+reconstruct that arc — showing each meaningful prompt/iteration as a step in
+a story, with its MOTIVATION, EXPECTED IMPROVEMENT, and ACTUAL RESULT.
 
 You will receive TWO inputs:
 1) === PREVIOUS SESSION HTML ===
-   The current ContextMap HTML file for this project (may be empty on first run).
+   The existing ContextMap HTML report for this project (may be empty on first run).
 
 2) === CURRENT SESSION TRANSCRIPT ===
-   A compressed terminal transcript of the latest session.
+   A compressed terminal transcript of the latest coding session.
 
-Your job:
-- Output the FULL UPDATED version of the SAME HTML file (it overwrites the previous one).
-- Merge the current session into the existing project evolution memory.
-- The HTML must visually present a mind-map-like evolution view with CENTER root and LEFT/RIGHT expansion.
-- The HTML must stay compact over time (anti-bloat). Use the compaction rules below.
+═══════════════════════════════════════════════════════════════════════════════
+OUTPUT RULES
+═══════════════════════════════════════════════════════════════════════════════
+- Output EXACTLY ONE complete, valid HTML document. No Markdown. No explanation.
+- All CSS must be inlined in a <style> tag. All JS (if any) must be inlined in a <script> tag.
+- No external libraries, CDNs, fonts, or network calls.  100% self-contained.
+- The HTML must look beautiful and professional when opened in any browser.
 
-ABSOLUTE OUTPUT RULES:
-- Output ONLY ONE complete valid HTML document. No Markdown. No explanation.
-- Inline CSS + inline JS only. No external libraries, assets, or network calls.
-- Must remain readable without JS (fall back to a simple outline).
+═══════════════════════════════════════════════════════════════════════════════
+DO NOT HALLUCINATE
+═══════════════════════════════════════════════════════════════════════════════
+- Only mention files, commands, errors, and outcomes that actually appear in
+  the transcript or previous HTML.
+- If something is ambiguous, label it with "Likely" or "Unclear".
+- Never invent file names, error messages, or results.
 
-DO NOT HALLUCINATE:
-- Only mention files/commands/errors/outcomes that exist in the transcript or previous HTML.
-- If unsure, label as "Likely" or "Unclear".
+═══════════════════════════════════════════════════════════════════════════════
+CONTENT STRUCTURE  (what to extract from the transcript)
+═══════════════════════════════════════════════════════════════════════════════
 
-──────────────────────────────────────────────────────────────────────────────
-ANTI-BLOAT DESIGN (MOST IMPORTANT)
-──────────────────────────────────────────────────────────────────────────────
-To reduce HTML growth over long projects, you MUST separate:
-(A) A compact structured DATA block (JSON) containing nodes + edges + minimal fields
-(B) A renderer (HTML/CSS/JS) that displays the mind map and details on demand
+For EACH meaningful user prompt/iteration in the transcript, identify:
 
-You MUST NOT duplicate large textual content across multiple sections.
-The single source of truth is the JSON data model.
+1. **Title**: A short descriptive title (<= 60 chars) for the iteration.
+2. **Motivation / Why**: What problem or goal drove this prompt?
+   Why did the user ask this? What pain point were they addressing?
+   (2-4 sentences)
+3. **Expected Improvement**: What did the user hope to achieve or fix?
+   What was the anticipated outcome? (1-3 sentences)
+4. **Actual Result**: What actually happened? Was it successful, partial,
+   or a failure? What files were changed? What was the outcome?
+   (2-4 sentences)
+5. **Status**: One of: success, partial, failed, in_progress
+6. **Key Artifacts**: Files created or modified (list, <= 8 items)
 
-Compaction rules:
-1) Keep only "high-level" node content in the main dataset:
-   - motivation (<= 240 chars)
-   - expected (<= 240 chars)
-   - result (<= 360 chars)
-   - title (<= 80 chars)
-   - artifacts (<= 8 items; each <= 80 chars)
-2) Merge trivial back-and-forth into one node when it shares the same goal.
-3) Deduplicate: If a new prompt is essentially the same as an existing node, UPDATE the existing node's result instead of creating a new node.
-4) Rolling compression for old history:
-   - For nodes older than the most recent 40 nodes (or beyond 120 total), replace verbose fields with a single "compressed_summary" (<= 220 chars) and clear long lists.
-   - Keep titles, status, parent links, and a short result.
-5) Archive optional: store extra details ONLY in a compact "archive" field per node (<= 500 chars) and render it only on click (no full-page repetition).
-6) No full transcript, no long logs, no repeated tables. Prefer one map + one compact list.
+GROUPING RULES:
+- Merge trivial back-and-forth exchanges that share the same goal into a
+  single iteration step.  Don't create a step for every tiny follow-up.
+- If a prompt is essentially a retry of a previous step, UPDATE the previous
+  step's result rather than creating a duplicate.
+- Aim for 3-15 iteration steps per session (find the right granularity).
 
-Your output should generally stay under ~250–450 KB even for long projects.
+═══════════════════════════════════════════════════════════════════════════════
+HTML LAYOUT  (how to present it)
+═══════════════════════════════════════════════════════════════════════════════
 
-──────────────────────────────────────────────────────────────────────────────
-ITERATION MODEL
-──────────────────────────────────────────────────────────────────────────────
-You must maintain a graph/tree of iterations:
-- Each node corresponds to a meaningful user prompt/iteration step.
-- Each node has:
-  id (string), step (int stable), title, status (success|partial|fail),
-  motivation, expected, result,
-  parent (step number or null),
-  branch ("L" or "R"),
-  depth (int, computed by JS), created_date (YYYY-MM-DD), updated_date (YYYY-MM-DD),
-  artifacts (array of strings),
-  tags (array of short strings, optional),
-  compressed_summary (optional), archive (optional)
+The HTML report should have these sections, in order:
 
-Relationship rules:
-- If a prompt refines a previous attempt, parent = that step.
-- If it starts a new effort, parent = null (new root under project root).
-- Branch assignment:
-  - Prefer grouping related arcs on the same side.
-  - Default heuristic:
-    * If parent exists, inherit parent's branch.
-    * If new root: alternate L/R to balance, unless strongly tied to a prior root (then follow that side).
+HEADER
+  - Title: "ContextMap — Project Evolution"
+  - Subtitle: Project directory name (extract from transcript if possible)
+  - Last updated: date/time
+  - Session count badge
 
-IMPORTANT: Step numbers must remain stable across updates.
-- Do not renumber existing steps.
-- Assign new step numbers sequentially.
+HIGH-LEVEL SUMMARY  (section id="summary")
+  - 3-5 bullet points summarizing what was accomplished overall
+  - Written at a high level, suitable for a quick glance
+  - Include: major milestones, overall direction, current state
 
-──────────────────────────────────────────────────────────────────────────────
-LAYOUT REQUIREMENTS (LEFT/RIGHT MIND MAP + AUTO DEPTH)
-──────────────────────────────────────────────────────────────────────────────
-The HTML must implement a simple auto-layout in JS:
-- Root node centered.
-- Left-branch nodes laid out to the left, right-branch nodes to the right.
-- Depth is the distance from root via parent pointers.
-- Position:
-  x = centerX ± depth * X_GAP (sign depends on branch)
-  y = computed by vertical stacking within each depth layer to avoid overlap
-- Draw connectors using inline SVG lines between parent and child.
+CONTEXT ANCHOR  (section id="anchor")
+  - "Where we left off" — 4-8 lines describing the current state
+  - What was the last thing being worked on?
+  - What should be done next?
+  - Any open blockers or pending items?
 
-The layout algorithm must:
-- Compute depth for each node.
-- Group by branch + depth.
-- Within each (branch, depth) bucket, assign y positions with Y_GAP spacing.
-- Ensure stable ordering (use step number order) for minimal jitter across updates.
+ITERATION TIMELINE  (section id="timeline")
+  - A vertical timeline of iteration steps, newest session on top
+  - Each step is a styled card showing:
+      [Status Icon]  Title
+      Motivation: ...
+      Expected:   ...
+      Result:     ...
+      Artifacts:  file1.py, file2.js
+  - Group cards by session with a session header/divider
+  - Use a vertical line or border to create the "timeline" feel
+  - Status icons: success = green checkmark, partial = amber warning,
+    failed = red X, in_progress = blue spinner
 
-No external libs. Keep code short and robust.
+OPEN THREADS  (section id="threads")
+  - Unresolved issues, pending tasks, known blockers
+  - If none, say "No open threads."
 
-──────────────────────────────────────────────────────────────────────────────
-HTML STRUCTURE (MUST FOLLOW)
-──────────────────────────────────────────────────────────────────────────────
+FOOTER
+  - "Generated by ContextMap"
+  - Timestamp
 
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>ContextMap — Project Evolution</title>
-  <style>
-    /* Inline CSS only. Provide:
-       - two-panel layout: map + detail panel
-       - node styles with status colors
-       - responsive behavior
-       - print-friendly minimal styling
-    */
-  </style>
-</head>
+═══════════════════════════════════════════════════════════════════════════════
+VISUAL DESIGN REQUIREMENTS  (CSS)
+═══════════════════════════════════════════════════════════════════════════════
 
-<body>
-<header>
-  <h1>ContextMap — Project Evolution</h1>
-  <p class="meta">Last updated: YYYY-MM-DD</p>
-</header>
+Use a clean, modern design with these characteristics:
+- Dark theme background: #0d1117 (or similar dark blue-gray)
+- Card backgrounds: #161b22 with subtle border: 1px solid #30363d
+- Text color: #e6edf3 (light gray-white)
+- Accent colors for status:
+    success:     #3fb950 (green)
+    partial:     #d29922 (amber)
+    failed:      #f85149 (red)
+    in_progress: #58a6ff (blue)
+- Subtle border-radius on cards (8px)
+- Comfortable padding and spacing
+- Timeline vertical line: 2px solid #30363d
+- Session dividers with a contrasting label
+- Use system font stack: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif
+- Responsive: readable on both desktop and mobile
+- Max content width: ~900px, centered
 
-<main>
-  <section id="snapshot">
-    <h2>Snapshot</h2>
-    <ul>
-      <li>2–4 bullets: what changed recently and current direction</li>
-    </ul>
-  </section>
+The design should feel like a polished GitHub-style dark interface.
 
-  <section id="anchor">
-    <h2>Current Context Anchor</h2>
-    <p>6–12 lines: where things stand, what to do next, key constraints</p>
-  </section>
+═══════════════════════════════════════════════════════════════════════════════
+ANTI-BLOAT / COMPACTION RULES
+═══════════════════════════════════════════════════════════════════════════════
 
-  <section id="map">
-    <h2>Mind Map</h2>
+The HTML file is overwritten each run and must not grow unboundedly:
 
-    <!-- No-JS fallback: simple outline (compact) -->
-    <noscript>
-      <div class="fallback">
-        <p><strong>JS is disabled.</strong> Outline view:</p>
-        <ol id="outline-fallback">
-          <!-- Render a minimal ordered list of steps here (static HTML generated by you).
-               Each item: Step, title, status, 1-line result. -->
-        </ol>
-      </div>
-    </noscript>
+1. Keep ONLY the most recent 30 iteration steps in full detail.
+2. For older steps (beyond the most recent 30), compress them into a single
+   "Archived History" collapsible section at the bottom, showing only:
+   - Step title + status + one-line result (<= 120 chars)
+3. The Summary and Context Anchor should always reflect the LATEST state.
+4. Total HTML file size should stay under ~200 KB even for very long projects.
+5. No raw transcript content should appear in the output.
+6. No duplicate content across sections.
 
-    <div class="map-ui">
-      <div class="map-canvas-wrap">
-        <svg id="edges" aria-hidden="true"></svg>
-        <div id="nodes"></div>
-      </div>
+═══════════════════════════════════════════════════════════════════════════════
+MERGE / UPDATE INSTRUCTIONS  (when previous HTML exists)
+═══════════════════════════════════════════════════════════════════════════════
 
-      <aside id="panel">
-        <h3>Selected Node</h3>
-        <div id="panel-body">
-          <p>Select a node to see details.</p>
-        </div>
-        <div class="panel-actions">
-          <button id="toggle-archive" type="button">Toggle extra details</button>
-        </div>
-      </aside>
-    </div>
-  </section>
+When PREVIOUS SESSION HTML is provided and non-empty:
+1. Parse the existing iteration steps from the previous HTML.
+2. Add new iteration steps from the current transcript as a new session group.
+3. Re-generate the Summary and Context Anchor to reflect ALL history.
+4. Apply compaction rules if total steps exceed 30.
+5. Preserve step numbering — do not renumber existing steps.
+6. Assign new step numbers sequentially from the highest existing number.
 
-  <section id="open-threads">
-    <h2>Open Threads</h2>
-    <ul id="threads">
-      <li><strong>Pending:</strong> … <br/><strong>Next:</strong> … <br/><strong>Blocker:</strong> …</li>
-    </ul>
-  </section>
-</main>
+When PREVIOUS SESSION HTML is empty:
+- This is the first session. Create the report from scratch.
 
-<footer>
-  <p>Generated by ContextMap.</p>
-</footer>
+═══════════════════════════════════════════════════════════════════════════════
+JAVASCRIPT (minimal, optional)
+═══════════════════════════════════════════════════════════════════════════════
 
-<!-- SINGLE SOURCE OF TRUTH: compact JSON data -->
-<script id="contextmap-data" type="application/json">
-{
-  "version": 1,
-  "project": { "title": "ContextMap", "last_updated": "YYYY-MM-DD" },
-  "stats": { "total_nodes": 0, "compressed_nodes": 0 },
-  "nodes": [
-    {
-      "id": "n-0001",
-      "step": 1,
-      "title": "Short title",
-      "status": "success",
-      "parent": null,
-      "branch": "L",
-      "created_date": "YYYY-MM-DD",
-      "updated_date": "YYYY-MM-DD",
-      "motivation": "…",
-      "expected": "…",
-      "result": "…",
-      "artifacts": ["…"],
-      "tags": ["…"],
-      "compressed_summary": null,
-      "archive": null
-    }
-  ],
-  "threads": [
-    { "pending": "...", "next": "...", "blocker": "..." }
-  ],
-  "snapshot": ["...", "..."],
-  "anchor": ["line 1", "line 2", "line 3"]
-}
-</script>
+You may include a small inline <script> at the bottom for:
+- Toggling the archived history section (collapsed by default)
+- Smooth scroll to sections
+- No other JS is needed. Keep it under 30 lines.
 
-<script>
-/*
-JS renderer requirements:
-- Parse JSON from #contextmap-data
-- Compute depth via parent pointers (root depth=0)
-- Assign x/y positions for left/right branches
-- Render nodes as absolutely-positioned div buttons inside #nodes
-- Render connectors as SVG lines inside #edges
-- Clicking a node populates #panel-body with:
-  title, status, motivation, expected, result, artifacts
-- "Toggle extra details" shows/hides node.archive if present
-- Keep code compact and stable. No external libs.
-*/
-</script>
-
-</body>
-</html>
-
-──────────────────────────────────────────────────────────────────────────────
-UPDATE / MERGE INSTRUCTIONS
-──────────────────────────────────────────────────────────────────────────────
-When PREVIOUS SESSION HTML exists:
-1) Extract and reuse the existing JSON from <script id="contextmap-data" type="application/json">.
-2) Merge new events from transcript.
-3) Apply compaction rules to keep total nodes manageable.
+═══════════════════════════════════════════════════════════════════════════════
+REMEMBER
+═══════════════════════════════════════════════════════════════════════════════
+- Your ENTIRE output must be the HTML document. Nothing else. No ```html fences.
+- The key value of this report is: for each prompt, clearly show the
+  MOTIVATION (why), EXPECTED improvement (what they hoped), and RESULT (what happened).
+- The summary should be HIGH LEVEL — think "executive briefing", not "git log".
+- Make it visually beautiful. This is a tool people open in their browser.
 """
     
-    # Construct input block
+    # Construct input block (user message with both previous HTML and current transcript)
     prompt_content = f"=== PREVIOUS SESSION HTML ===\n{old_summary}\n\n=== CURRENT SESSION TRANSCRIPT ===\n{transcript[-80000:]}"
     
     import tempfile
     import subprocess
     
-    # Create temp file for prompt content
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".txt") as tmp:
-        tmp.write(prompt_content)
-        tmp_path = tmp.name
-        
+    # Create temp files for system prompt and user prompt
+    tmp_system = None
+    tmp_prompt = None
+    
     try:
-        # Construct the Claude CLI command
-        # Strategy: cat prompt.txt | claude -p "Summarize this input"
-        # Or: claude -p "$(cat prompt.txt)"
+        # Write system prompt to a temp file
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".txt") as f:
+            f.write(system_prompt)
+            tmp_system = f.name
         
-        real_claude = os.getenv("REAL_CLAUDE_PATH") or "claude" 
+        # Write user prompt content to a temp file
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".txt") as f:
+            f.write(prompt_content)
+            tmp_prompt = f.name
         
-        # We assume 'claude' accepts prompt via argument. 
-        # Since prompt is large, we might hit ARG_MAX.
-        # Ideally, we should check if claude supports file input or stdin.
-        # For now, let's try the pipe approach which is standard for CLI tools.
+        real_claude = os.getenv("REAL_CLAUDE_PATH") or "claude"
         
-        # We run: cat tmp_path | claude -p "Analyze this input"
-        # Note: We must ensure we don't trigger the wrapper script again (infinite loop).
-        # The Wrapper script sets REAL_CLAUDE_PATH, so we are safe if running from there.
-        
-        # Command: claude --print "Analyze this file" (if supported)
-        # Or simply rely on stdin if supported.
-        
-        # Let's try to run it directly with the prompt as text, catching the output.
-        # This assumes the user is authenticated in the CLI environment.
-        
-        # Use subprocess to pipe
-        with open(tmp_path, 'r') as f:
+        # Read the prompt content to pass via stdin
+        # Use --system-prompt to pass the system instructions
+        # Use -p to pass the user prompt via stdin pipe
+        with open(tmp_prompt, 'r') as f:
             process = subprocess.run(
-                [real_claude, "-p", "Analyze the provided transcript context."], 
-                stdin=f,
+                [real_claude, "-p", prompt_content, "--system-prompt", system_prompt],
                 text=True, 
                 capture_output=True
             )
@@ -370,8 +293,9 @@ When PREVIOUS SESSION HTML exists:
     except Exception as e:
         return f"❌ Execution Error: {str(e)}"
     finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        for tmp_path in [tmp_system, tmp_prompt]:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
 def cleanup_old_logs(log_dir: str, days: int = 2):
     """Deletes log files older than X days."""
